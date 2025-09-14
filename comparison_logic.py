@@ -353,10 +353,145 @@ def map_ghg_emissions_data(raw_data_df, ingestion_df, ingestion_type):
             }
             
         elif ingestion_type == 'Monthly Data in Columns':
-            # Monthly Data in Columns implementation will be added later
+            # For Monthly Data in Columns, we need to match on: Facility Name, Resource Name
+            # and compare each month column with corresponding Month/Year in raw data
+            
+            # Get the facility column name for ingestion (could be 'Facility Name' or 'Facility')
+            ingestion_facility_col = 'Facility Name' if 'Facility Name' in ingestion_df.columns else 'Facility'
+            
+            # Create comparison results
+            comparison_results = []
+            matched_rows = 0
+            unmatched_ingestion_rows = 0
+            quantity_matches = 0
+            quantity_mismatches = 0
+            
+            # Define month name mapping
+            month_names = {
+                'Jan': 'January', 'Feb': 'February', 'Mar': 'March', 'Apr': 'April',
+                'May': 'May', 'Jun': 'June', 'Jul': 'July', 'Aug': 'August',
+                'Sep': 'September', 'Oct': 'October', 'Nov': 'November', 'Dec': 'December'
+            }
+            
+            # Debug: Show all columns
+            print("=== DEBUG: Monthly Data in Columns ===")
+            print("All ingestion columns:", list(ingestion_df.columns))
+            
+            # Get month columns from ingestion data (format: Mon-YY)
+            month_columns = [col for col in ingestion_df.columns if '-' in col and len(col) == 6 and col[:3] in month_names]
+            print("Detected month columns:", month_columns)
+            
+            # Create dynamic month mapping
+            month_mapping = {}
+            for col in month_columns:
+                month_abbr = col[:3]
+                year_str = col[4:]
+                year = 2000 + int(year_str)  # Convert YY to full year
+                month_mapping[col] = {
+                    'month': month_names[month_abbr],
+                    'year': year
+                }
+                print(f"Mapping {col} -> Month: {month_names[month_abbr]}, Year: {year}")
+            
+            print("Final month mapping:", month_mapping)
+            print("================================")
+            
+            # Iterate through each row in ingestion file
+            for idx, ingestion_row in ingestion_df.iterrows():
+                facility_name = ingestion_row[ingestion_facility_col]
+                resource_name = ingestion_row['Resource']
+                
+                # Debug: Show first few rows
+                if idx < 2:
+                    print(f"\n--- Processing Row {idx} ---")
+                    print(f"Facility: '{facility_name}'")
+                    print(f"Resource: '{resource_name}'")
+                
+                # Check each month column
+                for month_col in month_columns:
+                    ingestion_quantity = ingestion_row[month_col]
+                    
+                    # Skip if quantity is null or 0
+                    if pd.isna(ingestion_quantity) or ingestion_quantity == 0:
+                        if idx < 2:
+                            print(f"  Skipping {month_col}: {ingestion_quantity} (null or 0)")
+                        continue
+                    
+                    # Get corresponding month and year
+                    month_info = month_mapping[month_col]
+                    month = month_info['month']
+                    year = month_info['year']
+                    
+                    if idx < 2:
+                        print(f"  Checking {month_col}: {ingestion_quantity} -> Month: {month}, Year: {year}")
+                    
+                    # Find matching row in raw data
+                    raw_match = raw_data_df[
+                        (raw_data_df['Facility Name'] == facility_name) &
+                        (raw_data_df['Resource Name'] == resource_name) &
+                        (raw_data_df['Month'] == month) &
+                        (raw_data_df['Year'] == year)
+                    ]
+                    
+                    if idx < 2:
+                        print(f"    Found {len(raw_match)} matches in raw data")
+                        if len(raw_match) > 0:
+                            print(f"    Raw data match: {raw_match[['Facility Name', 'Resource Name', 'Month', 'Year', 'Quantity']].iloc[0].to_dict()}")
+                        else:
+                            # Show what's available in raw data for this facility
+                            facility_matches = raw_data_df[raw_data_df['Facility Name'] == facility_name]
+                            if len(facility_matches) > 0:
+                                print(f"    Available data for facility '{facility_name}':")
+                                print(facility_matches[['Facility Name', 'Resource Name', 'Month', 'Year']].head())
+                            else:
+                                print(f"    No data found for facility '{facility_name}' in raw data")
+                    
+                    if not raw_match.empty:
+                        matched_rows += 1
+                        raw_quantity = raw_match.iloc[0]['Quantity']
+                        
+                        # Compare quantities
+                        if raw_quantity == ingestion_quantity:
+                            quantity_matches += 1
+                            match_status = 'Match'
+                        else:
+                            quantity_mismatches += 1
+                            match_status = 'Mismatch'
+                        
+                        comparison_results.append({
+                            'facility_name': facility_name,
+                            'resource_name': resource_name,
+                            'month': month,
+                            'year': year,
+                            'month_column': month_col,
+                            'raw_quantity': raw_quantity,
+                            'ingestion_quantity': ingestion_quantity,
+                            'difference': raw_quantity - ingestion_quantity,
+                            'match_status': match_status
+                        })
+                    else:
+                        unmatched_ingestion_rows += 1
+                        comparison_results.append({
+                            'facility_name': facility_name,
+                            'resource_name': resource_name,
+                            'month': month,
+                            'year': year,
+                            'month_column': month_col,
+                            'raw_quantity': None,
+                            'ingestion_quantity': ingestion_quantity,
+                            'difference': None,
+                            'match_status': 'No Match in Raw Data'
+                        })
+            
             return {
                 'ingestion_type': 'Monthly Data in Columns',
-                'status': 'Monthly Data in Columns mapping ready for implementation'
+                'total_ingestion_rows': len(ingestion_df),
+                'total_comparisons': len(comparison_results),
+                'matched_rows': matched_rows,
+                'unmatched_rows': unmatched_ingestion_rows,
+                'quantity_matches': quantity_matches,
+                'quantity_mismatches': quantity_mismatches,
+                'comparison_results': comparison_results
             }
         else:
             return {'error': f'Unknown ingestion file type: {ingestion_type}'}
